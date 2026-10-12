@@ -1,7 +1,9 @@
 import { RuleEngine } from './engine/RuleEngine';
-import { AutomationNodeGraph } from './types/domain';
+import { DashboardController } from './components/Dashboard';
+import { renderDeviceCard } from './components/DeviceCard';
+import { AutomationNodeGraph, DeviceState } from './types/domain';
 
-const sampleAutomation: AutomationNodeGraph = {
+const motionAutomation: AutomationNodeGraph = {
   id: 'motion_hall_rule',
   name: 'Hall Motion Lights',
   enabled: true,
@@ -24,27 +26,32 @@ const sampleAutomation: AutomationNodeGraph = {
 };
 
 const ruleEngine = new RuleEngine((action) => {
-  console.log(`[DISPATCH] Executing service: ${action.service} on ${action.targetEntityId}`);
+  console.log(`[DISPATCH EVENT] -> Service: ${action.service} on Target: ${action.targetEntityId}`);
 });
+ruleEngine.registerRules([motionAutomation]);
 
-ruleEngine.registerRules([sampleAutomation]);
+const dashboard = new DashboardController(ruleEngine);
 
-console.log('Testing Rule Engine...');
+console.log('--- Initializing Smart Command Center UI Pipeline ---');
 
-// 1. Ingest ambient light level (below threshold of 50)
-ruleEngine.ingestStateUpdate({
+const luxSensor: DeviceState = {
   entityId: 'sensor.hall_illuminance',
   domain: 'sensor',
   state: '30',
-  attributes: { friendlyName: 'Hall Lux' },
+  attributes: { friendlyName: 'Hallway Ambient Light' },
   lastUpdated: Date.now(),
-});
+};
+dashboard.updateDevice(luxSensor);
+console.log(renderDeviceCard({ device: luxSensor, onToggle: () => {} }));
 
-// 2. Ingest motion trigger
-ruleEngine.ingestStateUpdate({
+const motionSensor: DeviceState = {
   entityId: 'binary_sensor.hall_motion',
   domain: 'sensor',
   state: 'on',
-  attributes: { friendlyName: 'Hall Motion' },
+  attributes: { friendlyName: 'Hallway Motion Sensor' },
   lastUpdated: Date.now(),
-});
+};
+dashboard.updateDevice(motionSensor);
+console.log(renderDeviceCard({ device: motionSensor, onToggle: () => {} }));
+
+console.log(`System Status: ${JSON.stringify(dashboard.getStats())}`);
