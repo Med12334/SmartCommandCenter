@@ -117,6 +117,23 @@ export default function App() {
     );
   };
 
+  const adjustLux = (delta: number) => {
+    setDevices((prev) =>
+      prev.map((d) => {
+        if (d.entityId === 'sensor.hall_illuminance') {
+          const nextVal = Math.max(0, Math.min(100, Number(d.state) + delta));
+          const updated: DeviceState = { ...d, state: String(nextVal), lastUpdated: Date.now() };
+
+          storageRef.current.upsertDevice(updated).catch(() => {});
+          ruleEngineRef.current?.ingestStateUpdate(updated);
+
+          return updated;
+        }
+        return d;
+      })
+    );
+  };
+
   const handleAddRule = () => {
     if (!newRuleName.trim()) return;
 
@@ -137,14 +154,28 @@ export default function App() {
 
     const updatedRules = [...rules, createdRule];
     setRules(updatedRules);
-    ruleEngineRef.current?.registerRules(updatedRules);
+    ruleEngineRef.current?.registerRules(updatedRules.filter((r) => r.enabled));
     setLogs((prev) => [`✨ [RULE REGISTERED]: ${newRuleName}`, ...prev.slice(0, 6)]);
 
     setNewRuleName('');
     setModalVisible(false);
   };
 
+  const toggleRuleEnabled = (id: string) => {
+    const updated = rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r));
+    setRules(updated);
+    ruleEngineRef.current?.registerRules(updated.filter((r) => r.enabled));
+  };
+
+  const deleteRule = (id: string) => {
+    const updated = rules.filter((r) => r.id !== id);
+    setRules(updated);
+    ruleEngineRef.current?.registerRules(updated.filter((r) => r.enabled));
+    setLogs((prev) => [`🗑️ [RULE REMOVED]: ${id}`, ...prev.slice(0, 6)]);
+  };
+
   const activeCount = devices.filter((d) => d.state === 'on').length;
+  const currentLux = devices.find((d) => d.entityId === 'sensor.hall_illuminance')?.state || '35';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -169,6 +200,30 @@ export default function App() {
         <Text style={styles.sectionTitle}>Real-Time Device Mesh</Text>
         {devices.map((device) => {
           const isPowered = device.state === 'on';
+          const isSensor = device.domain === 'sensor';
+
+          if (device.entityId === 'sensor.hall_illuminance') {
+            return (
+              <View key={device.entityId} style={styles.deviceCard}>
+                <View style={styles.deviceHeader}>
+                  <Text style={styles.deviceName}>{device.attributes.friendlyName}</Text>
+                  <Text style={[styles.deviceState, { color: '#38bdf8' }]}>{currentLux} LUX</Text>
+                </View>
+                <View style={styles.luxControlRow}>
+                  <Text style={styles.deviceDomain}>{device.entityId}</Text>
+                  <View style={styles.luxButtonRow}>
+                    <TouchableOpacity style={styles.luxBtn} onPress={() => adjustLux(-10)}>
+                      <Text style={styles.luxBtnText}>-10</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.luxBtn} onPress={() => adjustLux(10)}>
+                      <Text style={styles.luxBtnText}>+10</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            );
+          }
+
           return (
             <TouchableOpacity
               key={device.entityId}
@@ -206,8 +261,21 @@ export default function App() {
         </View>
 
         {rules.map((rule) => (
-          <View key={rule.id} style={styles.ruleCard}>
-            <Text style={styles.ruleName}>{rule.name}</Text>
+          <View key={rule.id} style={[styles.ruleCard, !rule.enabled && styles.ruleCardDisabled]}>
+            <View style={styles.ruleTopRow}>
+              <Text style={[styles.ruleName, !rule.enabled && { color: '#64748b' }]}>{rule.name}</Text>
+              <View style={styles.ruleActionsRow}>
+                <TouchableOpacity
+                  style={[styles.smallBadge, rule.enabled ? styles.badgeActive : styles.badgeDisabled]}
+                  onPress={() => toggleRuleEnabled(rule.id)}
+                >
+                  <Text style={styles.badgeText}>{rule.enabled ? 'ACTIVE' : 'MUTED'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => deleteRule(rule.id)}>
+                  <Text style={styles.deleteBtnText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
             <Text style={styles.ruleDetail}>
               IF <Text style={{ color: '#38bdf8' }}>{rule.triggers[0]?.entityId}</Text> IS ON → TURN ON{' '}
               <Text style={{ color: '#22c55e' }}>{rule.actions[0]?.targetEntityId}</Text>
@@ -325,6 +393,17 @@ const styles = StyleSheet.create({
   deviceDomain: { color: '#64748b', fontSize: 11 },
   deviceState: { color: '#94a3b8', fontSize: 13, fontWeight: '700' },
   deviceStateActive: { color: '#22c55e' },
+  luxControlRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
+  luxButtonRow: { flexDirection: 'row', gap: 8 },
+  luxBtn: {
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+  },
+  luxBtnText: { color: '#38bdf8', fontSize: 12, fontWeight: '700' },
   ruleCard: {
     backgroundColor: '#131b2e',
     borderRadius: 12,
@@ -333,7 +412,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1e293b',
   },
-  ruleName: { color: '#f8fafc', fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  ruleCardDisabled: { opacity: 0.5, borderColor: '#1e293b' },
+  ruleTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  ruleName: { color: '#f8fafc', fontSize: 14, fontWeight: '700' },
+  ruleActionsRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  smallBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
+  badgeActive: { backgroundColor: '#166534' },
+  badgeDisabled: { backgroundColor: '#334155' },
+  badgeText: { color: '#f8fafc', fontSize: 10, fontWeight: '700' },
+  deleteBtnText: { color: '#ef4444', fontSize: 16, fontWeight: 'bold' },
   ruleDetail: { color: '#94a3b8', fontSize: 12 },
   logContainer: {
     backgroundColor: '#05070c',
