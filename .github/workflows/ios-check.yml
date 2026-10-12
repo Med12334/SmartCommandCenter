@@ -22,19 +22,29 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Align Expo Dependencies
+        run: npx expo install --fix || true
+
       - name: Run TypeScript Verification
         run: npx tsc --noEmit
 
-      - name: Test Core Engine & App Bundle
+      - name: Test Core Engine
         run: |
           npx tsc
           node $(find dist -name "index.js" | head -n 1)
 
-      - name: Export iOS Bundle via Expo
-        run: npx expo export --platform ios --output-dir dist-ios
+      - name: Compile iOS JavaScript Bundle
+        run: |
+          mkdir -p ios-dist
+          npx expo export:embed \
+            --platform ios \
+            --dev false \
+            --entry-file src/App.tsx \
+            --bundle-output ios-dist/main.jsbundle \
+            --assets-dest ios-dist
 
       - name: Upload iOS Bundle Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-release-bundle
-          path: dist-ios/
+          path: ios-dist/
