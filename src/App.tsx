@@ -13,6 +13,7 @@ import {
 import { DeviceState, AutomationNodeGraph } from './types/domain';
 import { RuleEngine } from './engine/RuleEngine';
 import { LocalStorageEngine } from './storage/Database';
+import { HomeAssistantSocket, ConnectionStatus } from './network/HomeAssistantSocket';
 
 const INITIAL_DEVICES: DeviceState[] = [
   {
@@ -71,13 +72,22 @@ export default function App() {
     },
   ]);
   const [logs, setLogs] = useState<string[]>(['System initialized. AST Engine ready.']);
-  const [modalVisible, setModalVisible] = useState(false);
+  
+  // Rule Modal State
+  const [ruleModalVisible, setRuleModalVisible] = useState(false);
   const [newRuleName, setNewRuleName] = useState('');
   const [newTriggerEntity, setNewTriggerEntity] = useState('binary_sensor.hall_motion');
   const [newActionEntity, setNewActionEntity] = useState('switch.coffee_maker');
 
+  // Gateway Modal & Socket State
+  const [gatewayModalVisible, setGatewayModalVisible] = useState(false);
+  const [gatewayUrl, setGatewayUrl] = useState('ws://192.168.1.100:8123/api/websocket');
+  const [gatewayToken, setGatewayToken] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('DISCONNECTED');
+
   const storageRef = useRef<LocalStorageEngine>(new LocalStorageEngine());
   const ruleEngineRef = useRef<RuleEngine | null>(null);
+  const socketRef = useRef<HomeAssistantSocket | null>(null);
 
   useEffect(() => {
     storageRef.current.init().catch(() => {});
@@ -86,6 +96,7 @@ export default function App() {
       const logMsg = `⚡ [AST TRIGGER]: ${action.service.toUpperCase()} -> ${action.targetEntityId}`;
       setLogs((prev) => [logMsg, ...prev.slice(0, 6)]);
 
+      // Local state optimistic update
       setDevices((prev) =>
         prev.map((d) =>
           d.entityId === action.targetEntityId
@@ -93,12 +104,45 @@ export default function App() {
             : d
         )
       );
+
+      // Call remote gateway service if connected
+      const [domain] = action.targetEntityId.split('.');
+      socketRef.current?.callService(domain, action.service, action.targetEntityId, action.payload);
     });
 
     engine.registerRules(rules);
     INITIAL_DEVICES.forEach((d) => engine.ingestStateUpdate(d));
     ruleEngineRef.current = engine;
   }, []);
+
+  const connectGateway = () => {
+    if (!gatewayUrl.trim()) return;
+
+    const socket = new HomeAssistantSocket(gatewayUrl, gatewayToken);
+
+    socket.onStatus((status) => {
+      setConnectionStatus(status);
+      setLogs((prev) => [`🌐 [GATEWAY STATUS]: ${status}`, ...prev.slice(0, 6)]);
+    });
+
+    socket.onState((device) => {
+      setDevices((prev) => {
+        const exists = prev.some((d) => d.entityId === device.entityId);
+        if (exists) {
+          return prev.map((d) => (d.entityId === device.entityId ? device : d));
+        }
+        return [...prev, device];
+      });
+
+      storageRef.current.upsertDevice(device).catch(() => {});
+      ruleEngineRef.current?.ingestStateUpdate(device);
+      setLogs((prev) => [`🔄 [INCOMING SYNC]: ${device.entityId} -> ${device.state}`, ...prev.slice(0, 6)]);
+    });
+
+    socket.connect();
+    socketRef.current = socket;
+    setGatewayModalVisible(false);
+  };
 
   const toggleDevice = (entityId: string) => {
     setDevices((prev) =>
@@ -109,6 +153,13 @@ export default function App() {
 
           storageRef.current.upsertDevice(updated).catch(() => {});
           ruleEngineRef.current?.ingestStateUpdate(updated);
+
+          const [domain] = entityId.split('.');
+          socketRef.current?.callService(
+            domain,
+            nextState === 'on' ? 'turn_on' : 'turn_off',
+            entityId
+          );
 
           return updated;
         }
@@ -158,7 +209,7 @@ export default function App() {
     setLogs((prev) => [`✨ [RULE REGISTERED]: ${newRuleName}`, ...prev.slice(0, 6)]);
 
     setNewRuleName('');
-    setModalVisible(false);
+    setRuleModalVisible(false);
   };
 
   const toggleRuleEnabled = (id: string) => {
@@ -181,6 +232,30 @@ export default function App() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
       <ScrollView contentContainerStyle={styles.content}>
+        
+        {/* Gateway Bar */}
+        <View style={styles.gatewayBar}>
+          <View style={styles.gatewayInfo}>
+            <View
+              style={[
+                styles.statusDot,
+                connectionStatus === 'CONNECTED'
+                  ? { backgroundColor: '#22c55e' }
+                  : connectionStatus === 'CONNECTING'
+                  ? { backgroundColor: '#eab308' }
+                  : { backgroundColor: '#ef4444' },
+              ]}
+            />
+            <Text style={styles.gatewayStatusText}>GATEWAY: {connectionStatus}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.gatewayBtn}
+            onPress={() => setGatewayModalVisible(true)}
+          >
+            <Text style={styles.gatewayBtnText}>Configure</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.header}>
           <Text style={styles.subTitle}>EDGE AST ORCHESTRATION</Text>
           <Text style={styles.title}>Command Center</Text>
@@ -200,13 +275,12 @@ export default function App() {
         <Text style={styles.sectionTitle}>Real-Time Device Mesh</Text>
         {devices.map((device) => {
           const isPowered = device.state === 'on';
-          const isSensor = device.domain === 'sensor';
 
           if (device.entityId === 'sensor.hall_illuminance') {
             return (
               <View key={device.entityId} style={styles.deviceCard}>
                 <View style={styles.deviceHeader}>
-                  <Text style={styles.deviceName}>{device.attributes.friendlyName}</Text>
+                  <Text style={styles.deviceName}>{device.attributes.friendlyName || device.entityId}</Text>
                   <Text style={[styles.deviceState, { color: '#38bdf8' }]}>{currentLux} LUX</Text>
                 </View>
                 <View style={styles.luxControlRow}>
@@ -232,7 +306,7 @@ export default function App() {
               style={[styles.deviceCard, isPowered && styles.deviceCardActive]}
             >
               <View style={styles.deviceHeader}>
-                <Text style={styles.deviceName}>{device.attributes.friendlyName}</Text>
+                <Text style={styles.deviceName}>{device.attributes.friendlyName || device.entityId}</Text>
                 <View
                   style={[
                     styles.statusIndicator,
@@ -254,7 +328,7 @@ export default function App() {
           <Text style={styles.sectionTitle}>Active Automations ({rules.length})</Text>
           <TouchableOpacity
             style={styles.addBtn}
-            onPress={() => setModalVisible(true)}
+            onPress={() => setRuleModalVisible(true)}
           >
             <Text style={styles.addBtnText}>+ Add Rule</Text>
           </TouchableOpacity>
@@ -293,8 +367,51 @@ export default function App() {
         </View>
       </ScrollView>
 
-      {/* Modal for Rule Creation */}
-      <Modal visible={modalVisible} transparent animationType="fade">
+      {/* Gateway Settings Modal */}
+      <Modal visible={gatewayModalVisible} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Home Assistant Socket</Text>
+
+            <Text style={styles.inputLabel}>WEBSOCKET URL</Text>
+            <TextInput
+              style={styles.textInput}
+              value={gatewayUrl}
+              onChangeText={setGatewayUrl}
+              placeholder="ws://192.168.1.100:8123/api/websocket"
+              placeholderTextColor="#64748b"
+            />
+
+            <Text style={styles.inputLabel}>LONG-LIVED ACCESS TOKEN</Text>
+            <TextInput
+              style={styles.textInput}
+              secureTextEntry
+              value={gatewayToken}
+              onChangeText={setGatewayToken}
+              placeholder="Paste Bearer Token"
+              placeholderTextColor="#64748b"
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: '#1e293b' }]}
+                onPress={() => setGatewayModalVisible(false)}
+              >
+                <Text style={styles.modalBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: '#22c55e' }]}
+                onPress={connectGateway}
+              >
+                <Text style={[styles.modalBtnText, { color: '#090d16' }]}>Connect Stream</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Rule Creator Modal */}
+      <Modal visible={ruleModalVisible} transparent animationType="fade">
         <View style={styles.modalBackdrop}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>New AST Automation</Text>
@@ -325,7 +442,7 @@ export default function App() {
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.modalBtn, { backgroundColor: '#1e293b' }]}
-                onPress={() => setModalVisible(false)}
+                onPress={() => setRuleModalVisible(false)}
               >
                 <Text style={styles.modalBtnText}>Cancel</Text>
               </TouchableOpacity>
@@ -346,6 +463,23 @@ export default function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, minHeight: '100%', backgroundColor: '#090d16' },
   content: { padding: 20, paddingBottom: 40 },
+  gatewayBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#131b2e',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  gatewayInfo: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  gatewayStatusText: { color: '#94a3b8', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
+  gatewayBtn: { backgroundColor: '#1e293b', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  gatewayBtnText: { color: '#38bdf8', fontSize: 11, fontWeight: '600' },
   header: { marginBottom: 20 },
   subTitle: { color: '#38bdf8', fontSize: 11, letterSpacing: 2, fontWeight: '700' },
   title: { color: '#f8fafc', fontSize: 28, fontWeight: '800', marginTop: 4 },

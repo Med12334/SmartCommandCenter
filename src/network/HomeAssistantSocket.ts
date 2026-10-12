@@ -1,111 +1,120 @@
 import { DeviceState } from '../types/domain';
 
-type StateUpdateCallback = (updatedDevice: DeviceState) => void;
+export type ConnectionStatus = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
 
-export class LocalProtocolEngine {
-  private ws: any = null;
-  private messageCounter = 1;
-  private onStateUpdate: StateUpdateCallback;
-  private isConnected = false;
-  private reconnectAttempts = 0;
-  private maxReconnectDelay = 30000;
+export class HomeAssistantSocket {
+  private ws: WebSocket | null = null;
+  private messageId: number = 1;
+  private onStateCallback?: (device: DeviceState) => void;
+  private onStatusCallback?: (status: ConnectionStatus) => void;
 
   constructor(
-    private readonly hostIp: string,
-    private readonly authToken: string,
-    onStateUpdate: StateUpdateCallback
-  ) {
-    this.onStateUpdate = onStateUpdate;
+    private url: string,
+    private token: string
+  ) {}
+
+  public onState(cb: (device: DeviceState) => void) {
+    this.onStateCallback = cb;
+  }
+
+  public onStatus(cb: (status: ConnectionStatus) => void) {
+    this.onStatusCallback = cb;
   }
 
   public connect(): void {
-    const url = `ws://${this.hostIp}/api/websocket`;
-    // @ts-ignore
-    this.ws = new WebSocket(url);
-
-    this.ws.onopen = () => {
-      this.reconnectAttempts = 0;
-    };
-
-    this.ws.onmessage = (event: any) => {
-      try {
-        const data = JSON.parse(event.data);
-        this.handleMessage(data);
-      } catch (err) {
-        console.error('Failed to parse frame:', err);
-      }
-    };
-
-    this.ws.onclose = () => {
-      this.isConnected = false;
-      this.scheduleReconnect();
-    };
-
-    this.ws.onerror = (err: any) => {
-      console.warn('Socket error:', err);
-      this.ws?.close();
-    };
-  }
-
-  private handleMessage(message: any): void {
-    if (message.type === 'auth_required') {
-      this.send({ type: 'auth', access_token: this.authToken });
-      return;
+    if (this.ws) {
+      this.ws.close();
     }
 
-    if (message.type === 'auth_ok') {
-      this.isConnected = true;
-      this.subscribeToEvents();
-      return;
-    }
+    this.onStatusCallback?.('CONNECTING');
 
-    if (message.type === 'event' && message.event?.event_type === 'state_changed') {
-      const stateData = message.event.data.new_state;
-      if (!stateData) return;
+    try {
+      this.ws = new WebSocket(this.url);
 
-      const device: DeviceState = {
-        entityId: stateData.entity_id,
-        domain: stateData.entity_id.split('.')[0] as any,
-        state: stateData.state,
-        attributes: {
-          friendlyName: stateData.attributes.friendly_name || stateData.entity_id,
-          ...stateData.attributes,
-        },
-        lastUpdated: new Date(stateData.last_updated).getTime(),
+      this.ws.onopen = () => {
+        // Wait for auth_required message from Home Assistant
       };
 
-      this.onStateUpdate(device);
+      this.ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          this.handleIncoming(msg);
+        } catch (e) {
+          console.error('Failed to parse WS frame', e);
+        }
+      };
+
+      this.ws.onerror = () => {
+        this.onStatusCallback?.('ERROR');
+      };
+
+      this.ws.onclose = () => {
+        this.onStatusCallback?.('DISCONNECTED');
+      };
+    } catch {
+      this.onStatusCallback?.('ERROR');
     }
   }
 
-  private subscribeToEvents(): void {
-    this.send({
-      id: this.messageCounter++,
-      type: 'subscribe_events',
-      event_type: 'state_changed',
-    });
-  }
-
-  public sendCommand(domain: string, service: string, entityId: string, serviceData: object = {}): void {
-    if (!this.isConnected) throw new Error('Local engine is offline.');
-    this.send({
-      id: this.messageCounter++,
-      type: 'call_service',
-      domain,
-      service,
-      service_data: { entity_id: entityId, ...serviceData },
-    });
-  }
-
-  private send(payload: object): void {
-    if (this.ws && this.ws.readyState === 1) {
-      this.ws.send(JSON.stringify(payload));
+  private handleIncoming(msg: any): void {
+    if (msg.type === 'auth_required') {
+      this.ws?.send(JSON.stringify({ type: 'auth', access_token: this.token }));
+    } else if (msg.type === 'auth_ok') {
+      this.onStatusCallback?.('CONNECTED');
+      this.subscribeEvents();
+    } else if (msg.type === 'auth_invalid') {
+      this.onStatusCallback?.('ERROR');
+      this.disconnect();
+    } else if (msg.type === 'event' && msg.event?.event_type === 'state_changed') {
+      const data = msg.event.data;
+      if (data?.new_state) {
+        const entity = data.new_state;
+        const [domain] = entity.entity_id.split('.');
+        const device: DeviceState = {
+          entityId: entity.entity_id,
+          domain: domain,
+          state: entity.state,
+          attributes: entity.attributes || {},
+          lastUpdated: new Date(entity.last_updated).getTime() || Date.now(),
+        };
+        this.onStateCallback?.(device);
+      }
     }
   }
 
-  private scheduleReconnect(): void {
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
-    this.reconnectAttempts++;
-    setTimeout(() => this.connect(), delay);
+  private subscribeEvents(): void {
+    const id = this.messageId++;
+    this.ws?.send(
+      JSON.stringify({
+        id,
+        type: 'subscribe_events',
+        event_type: 'state_changed',
+      })
+    );
+  }
+
+  public callService(domain: string, service: string, entityId: string, payload: Record<string, any> = {}): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const id = this.messageId++;
+    this.ws.send(
+      JSON.stringify({
+        id,
+        type: 'call_service',
+        domain,
+        service,
+        service_data: {
+          entity_id: entityId,
+          ...payload,
+        },
+      })
+    );
+  }
+
+  public disconnect(): void {
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.onStatusCallback?.('DISCONNECTED');
   }
 }
