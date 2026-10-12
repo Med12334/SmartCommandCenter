@@ -30,18 +30,11 @@ jobs:
           npx tsc
           node $(find dist -name "index.js" | head -n 1)
 
-      - name: Export React Native iOS Bundle
-        run: |
-          mkdir -p ios-bundle
-          npx react-native bundle \
-            --platform ios \
-            --dev false \
-            --entry-file src/App.tsx \
-            --bundle-output ios-bundle/main.jsbundle \
-            --assets-dest ios-bundle
+      - name: Export iOS Bundle via Expo
+        run: npx expo export --platform ios --output-dir dist-ios
 
       - name: Upload iOS Bundle Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-release-bundle
-          path: ios-bundle/
+          path: dist-ios/
