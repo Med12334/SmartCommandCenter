@@ -7,10 +7,18 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.med12334.smartcommandcenter"
+      "bundleIdentifier": "com.med12334.smartcommandcenter",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.med12334.smartcommandcenter"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6a467079-cca6-4a22-b859-68c55775fafd"
+      }
     }
   }
 }
