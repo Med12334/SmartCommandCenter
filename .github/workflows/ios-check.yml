@@ -25,7 +25,8 @@ jobs:
       - name: Run TypeScript Verification
         run: npx tsc --noEmit
 
-      - name: Test Core Engine
+      - name: Test Core Engine & App Bundle
         run: |
           npx tsc
-          node dist/index.js
+          # Finds and executes index.js regardless of output path (dist/index.js or dist/src/index.js)
+          node $(find dist -name "index.js" | head -n 1)

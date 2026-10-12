@@ -5,11 +5,12 @@
     "jsx": "react-native",
     "lib": ["ES2022", "DOM"],
     "types": ["node"],
+    "rootDir": "./src",
     "outDir": "./dist",
     "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src/**/*", "App.tsx"]
+  "include": ["src/**/*"]
 }
