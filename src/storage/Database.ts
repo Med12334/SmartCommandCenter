@@ -1,14 +1,14 @@
+import * as SQLite from 'expo-sqlite';
 import { TelemetryRecord, DeviceState } from '../types/domain';
 
-export interface StorageAdapter {
-  execute(sql: string, params?: unknown[]): Promise<any>;
-}
-
-export class DatabaseEngine {
-  constructor(private adapter: StorageAdapter) {}
+export class LocalStorageEngine {
+  private db: SQLite.SQLiteDatabase | null = null;
 
   public async init(): Promise<void> {
-    await this.adapter.execute(`
+    this.db = await SQLite.openDatabaseAsync('smart_command_center.db');
+
+    await this.db.execAsync(`
+      PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS device_snapshots (
         entity_id TEXT PRIMARY KEY,
         domain TEXT,
@@ -16,9 +16,6 @@ export class DatabaseEngine {
         attributes_json TEXT,
         last_updated INTEGER
       );
-    `);
-
-    await this.adapter.execute(`
       CREATE TABLE IF NOT EXISTS telemetry (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entity_id TEXT NOT NULL,
@@ -30,6 +27,7 @@ export class DatabaseEngine {
   }
 
   public async upsertDevice(device: DeviceState): Promise<void> {
+    if (!this.db) return;
     const sql = `
       INSERT INTO device_snapshots (entity_id, domain, state, attributes_json, last_updated)
       VALUES (?, ?, ?, ?, ?)
@@ -38,20 +36,34 @@ export class DatabaseEngine {
         attributes_json = excluded.attributes_json,
         last_updated = excluded.last_updated;
     `;
-    await this.adapter.execute(sql, [
+    await this.db.runAsync(
+      sql,
       device.entityId,
       device.domain,
       device.state,
       JSON.stringify(device.attributes),
-      device.lastUpdated,
-    ]);
+      device.lastUpdated
+    );
   }
 
   public async recordTelemetry(record: TelemetryRecord): Promise<void> {
+    if (!this.db) return;
     const sql = `
       INSERT INTO telemetry (entity_id, metric, value, recorded_at)
       VALUES (?, ?, ?, ?);
     `;
-    await this.adapter.execute(sql, [record.entityId, record.metric, record.value, record.recordedAt]);
+    await this.db.runAsync(sql, record.entityId, record.metric, record.value, record.recordedAt);
+  }
+
+  public async getAllDevices(): Promise<DeviceState[]> {
+    if (!this.db) return [];
+    const rows = await this.db.getAllAsync<any>('SELECT * FROM device_snapshots;');
+    return rows.map((r) => ({
+      entityId: r.entity_id,
+      domain: r.domain,
+      state: r.state,
+      attributes: JSON.parse(r.attributes_json || '{}'),
+      lastUpdated: r.last_updated,
+    }));
   }
 }
