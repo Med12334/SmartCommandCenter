@@ -3,8 +3,13 @@
     "target": "ES2022",
     "module": "CommonJS",
     "jsx": "react-native",
-    "lib": ["ES2022", "DOM"],
-    "types": ["node"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ],
     "rootDir": "./src",
     "outDir": "./dist",
     "strict": false,
@@ -12,5 +17,8 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ],
+  "extends": "expo/tsconfig.base"
 }

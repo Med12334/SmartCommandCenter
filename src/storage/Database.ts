@@ -1,12 +1,15 @@
-import * as SQLite from 'expo-sqlite';
+import { Platform } from 'react-native';
 import { TelemetryRecord, DeviceState } from '../types/domain';
 
 export class LocalStorageEngine {
-  private db: SQLite.SQLiteDatabase | null = null;
+  private db: any = null;
 
   public async init(): Promise<void> {
+    if (Platform.OS === 'web') {
+      return;
+    }
+    const SQLite = await import('expo-sqlite');
     this.db = await SQLite.openDatabaseAsync('smart_command_center.db');
-
     await this.db.execAsync(`
       PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS device_snapshots (
@@ -57,8 +60,8 @@ export class LocalStorageEngine {
 
   public async getAllDevices(): Promise<DeviceState[]> {
     if (!this.db) return [];
-    const rows = await this.db.getAllAsync<any>('SELECT * FROM device_snapshots;');
-    return rows.map((r) => ({
+    const rows = await this.db.getAllAsync('SELECT * FROM device_snapshots;');
+    return rows.map((r: any) => ({
       entityId: r.entity_id,
       domain: r.domain,
       state: r.state,

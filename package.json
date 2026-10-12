@@ -1,7 +1,7 @@
 {
   "name": "smartcommandcenter",
   "version": "1.0.0",
-  "main": "src/App.tsx",
+  "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -20,7 +20,9 @@
     "expo": "^57.0.27",
     "expo-sqlite": "~57.0.4",
     "react": "19.2.3",
+    "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-web": "^0.21.2",
     "typescript": "~6.0.3"
   }
 }
