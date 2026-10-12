@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "SmartCommandCenter",
+    "slug": "smart-command-center",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.med12334.smartcommandcenter"
+    },
+    "android": {
+      "package": "com.med12334.smartcommandcenter"
+    }
+  }
+}
