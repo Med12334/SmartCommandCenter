@@ -182,7 +182,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, height: '100%', minHeight: '100vh', backgroundColor: '#090d16' },
+  container: { flex: 1, height: '100%', minHeight: '100%', backgroundColor: '#090d16' },
   content: { padding: 20 },
   header: { marginBottom: 20 },
   subTitle: { color: '#38bdf8', fontSize: 11, letterSpacing: 2, fontWeight: '700' },
